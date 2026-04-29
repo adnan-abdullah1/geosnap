@@ -1,0 +1,917 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#1a402f">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="GeoSnap">
+  <title>GeoSnap</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
+  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+    html, body {
+      width: 100%; height: 100%;
+      overflow: hidden;
+      background: #0a0a0a;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      color: #fff;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    #camera {
+      position: fixed; inset: 0;
+      width: 100%; height: 100%;
+      object-fit: cover;
+      background: #000;
+    }
+
+    /* Top status — only used during loading or error */
+    #status {
+      position: fixed;
+      top: max(env(safe-area-inset-top), 16px);
+      left: 16px; right: 80px;
+      padding: 12px 16px;
+      background: rgba(20, 20, 22, 0.85);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border-radius: 12px;
+      font-size: 15px;
+      line-height: 1.4;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      border: 1px solid rgba(255,255,255,0.08);
+      transition: opacity 0.3s ease;
+    }
+    #status[hidden] { display: none; }
+
+    #status .dot {
+      width: 11px; height: 11px;
+      border-radius: 50%;
+      background: #ffb454;
+      flex-shrink: 0;
+      animation: pulse 1.4s ease-in-out infinite;
+    }
+    #status.error .dot { background: #e85a5a; animation: none; }
+    #status .text {
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.5; transform: scale(0.85); }
+    }
+
+    /* Install button (top right) */
+    #install-btn {
+      position: fixed;
+      top: max(env(safe-area-inset-top), 16px);
+      right: 16px;
+      padding: 10px 14px;
+      background: rgba(108, 209, 122, 0.95);
+      color: #0a0a0a;
+      border: none;
+      border-radius: 22px;
+      font-size: 14px;
+      font-weight: 600;
+      font-family: inherit;
+      cursor: pointer;
+      backdrop-filter: blur(12px);
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+      z-index: 30;
+      transition: opacity 0.2s ease, transform 0.15s ease;
+    }
+    #install-btn[hidden] { display: none; }
+    #install-btn:active { transform: scale(0.95); }
+
+    /* Live watermark preview - shows what the photo will look like */
+    #wm-preview {
+      position: fixed;
+      bottom: calc(170px + env(safe-area-inset-bottom));
+      left: 12px; right: 12px;
+      background: rgba(14, 14, 16, 0.78);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      border-radius: 14px;
+      padding: 12px;
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      border: 1px solid rgba(255,255,255,0.1);
+      box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+      transition: opacity 0.3s ease;
+    }
+    #wm-preview[hidden] { display: none; }
+
+    #wm-preview .thumb-wrap {
+      width: 84px; height: 84px;
+      border-radius: 8px;
+      overflow: hidden;
+      flex-shrink: 0;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.1);
+      position: relative;
+    }
+    #wm-preview .thumb-wrap img {
+      width: 100%; height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+    #wm-preview .thumb-placeholder {
+      position: absolute; inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: rgba(255,255,255,0.4);
+      font-size: 11px;
+      text-align: center;
+      padding: 4px;
+    }
+
+    #wm-preview .info {
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+    }
+    #wm-preview .title {
+      font-size: 16px;
+      font-weight: 700;
+      color: #fff;
+      margin-bottom: 3px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      line-height: 1.2;
+    }
+    #wm-preview .address {
+      font-size: 12px;
+      color: rgba(255,255,255,0.78);
+      line-height: 1.3;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+      margin-bottom: 4px;
+    }
+    #wm-preview .meta {
+      font-size: 11px;
+      color: rgba(255,255,255,0.55);
+      line-height: 1.3;
+    }
+
+    /* Shutter */
+    #shutter-area {
+      position: fixed;
+      bottom: 0; left: 0; right: 0;
+      padding: 30px 0 max(env(safe-area-inset-bottom), 30px);
+      display: flex;
+      justify-content: center;
+      background: linear-gradient(to top, rgba(0,0,0,0.5), transparent);
+    }
+    #shutter {
+      width: 88px; height: 88px;
+      border-radius: 50%;
+      border: 5px solid #fff;
+      background: rgba(255,255,255,0.15);
+      cursor: pointer;
+      transition: transform 0.15s ease;
+      position: relative;
+    }
+    #shutter::after {
+      content: '';
+      position: absolute; inset: 6px;
+      border-radius: 50%;
+      background: #fff;
+    }
+    #shutter:active { transform: scale(0.92); }
+    #shutter:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    /* Preview screen (after capture) */
+    #preview {
+      position: fixed; inset: 0;
+      background: #000;
+      display: flex; flex-direction: column;
+      z-index: 10;
+    }
+    #preview[hidden] { display: none; }
+
+    .preview-top {
+      display: flex;
+      justify-content: center;
+      padding: max(env(safe-area-inset-top), 14px) 16px 8px;
+      background: #0a0a0a;
+    }
+    #edit-title-btn {
+      background: rgba(255,255,255,0.08);
+      color: rgba(255,255,255,0.85);
+      border: 1px solid rgba(255,255,255,0.12);
+      padding: 10px 16px;
+      border-radius: 22px;
+      font-size: 15px;
+      font-family: inherit;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      transition: opacity 0.15s ease;
+    }
+    #edit-title-btn:active { opacity: 0.65; }
+
+    #preview img {
+      flex: 1; width: 100%;
+      object-fit: contain;
+      min-height: 0;
+    }
+
+    .preview-actions {
+      display: flex; gap: 10px;
+      padding: 16px 16px max(env(safe-area-inset-bottom), 24px);
+      background: #0a0a0a;
+    }
+    .preview-actions button {
+      flex: 1;
+      padding: 18px 8px;
+      border: none;
+      border-radius: 14px;
+      font-size: 17px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.15s ease;
+      font-family: inherit;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+    }
+    .preview-actions button:active { opacity: 0.7; }
+    #retake { background: #2a2a2c; color: #fff; flex: 0.7; }
+    #save { background: #3a3a3d; color: #fff; }
+    #share { background: #25d366; color: #0a0a0a; flex: 1.3; }  /* WhatsApp-ish green */
+
+    .toast {
+      position: fixed;
+      bottom: 140px; left: 50%;
+      transform: translateX(-50%);
+      background: rgba(20,20,22,0.95);
+      padding: 12px 22px;
+      border-radius: 24px;
+      font-size: 15px;
+      z-index: 20;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.3s ease;
+      border: 1px solid rgba(255,255,255,0.1);
+      max-width: 80%;
+      text-align: center;
+    }
+    .toast.show { opacity: 1; }
+
+    canvas { display: none; }
+  </style>
+</head>
+<body>
+  <video id="camera" autoplay playsinline muted></video>
+
+  <div id="status">
+    <span class="dot"></span>
+    <span class="text">Starting...</span>
+  </div>
+
+  <button id="install-btn" hidden type="button">📲 Install</button>
+
+  <!-- Live preview of the watermark — shows what the captured photo will look like -->
+  <div id="wm-preview" hidden>
+    <div class="thumb-wrap">
+      <span class="thumb-placeholder" id="thumb-placeholder">Loading map…</span>
+      <img id="wm-thumb" alt="" hidden>
+    </div>
+    <div class="info">
+      <div class="title" id="wm-title"></div>
+      <div class="address" id="wm-address"></div>
+      <div class="meta" id="wm-meta"></div>
+    </div>
+  </div>
+
+  <div id="shutter-area">
+    <button id="shutter" disabled aria-label="Take photo"></button>
+  </div>
+
+  <div id="preview" hidden>
+    <div class="preview-top">
+      <button id="edit-title-btn" type="button">
+        <span>✏️</span><span>Edit place name</span>
+      </button>
+    </div>
+    <img id="preview-img" alt="Captured photo">
+    <div class="preview-actions">
+      <button id="retake">Retake</button>
+      <button id="save">💾 Save</button>
+      <button id="share">📤 Share</button>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+  <canvas id="canvas"></canvas>
+
+  <script>
+    // ============================================================
+    //  GOOGLE MAPS API KEY
+    //  IMPORTANT: in Google Cloud Console, restrict this key to:
+    //    - Application restrictions: Websites → your deployed domain
+    //    - API restrictions: Geocoding API + Maps Static API only
+    // ============================================================
+    const GOOGLE_API_KEY = 'PASTE_YOUR_KEY_HERE';
+
+    // ---- DOM ----
+    const video = document.getElementById('camera');
+    const statusEl = document.getElementById('status');
+    const statusText = statusEl.querySelector('.text');
+    const shutter = document.getElementById('shutter');
+    const preview = document.getElementById('preview');
+    const previewImg = document.getElementById('preview-img');
+    const canvas = document.getElementById('canvas');
+    const toast = document.getElementById('toast');
+    const editTitleBtn = document.getElementById('edit-title-btn');
+    const installBtn = document.getElementById('install-btn');
+
+    const wmPreview = document.getElementById('wm-preview');
+    const wmThumb = document.getElementById('wm-thumb');
+    const wmTitle = document.getElementById('wm-title');
+    const wmAddress = document.getElementById('wm-address');
+    const wmMeta = document.getElementById('wm-meta');
+    const thumbPlaceholder = document.getElementById('thumb-placeholder');
+
+    // ---- State ----
+    let currentLocation = null;
+    let lastAddressFetch = { lat: 0, lon: 0, time: 0 };
+    let lastBlob = null;
+    let cameraReady = false;
+    let gpsReady = false;
+    let mapImage = null;
+    let mapImageLoc = null;
+
+    let frozenFrame = null;
+    let frozenLocation = null;
+    let frozenMapImage = null;
+    let customTitle = null;
+
+    // For PWA install prompt
+    let deferredInstallPrompt = null;
+
+    function showToast(msg, duration = 2200) {
+      toast.textContent = msg;
+      toast.classList.add('show');
+      clearTimeout(toast._t);
+      toast._t = setTimeout(() => toast.classList.remove('show'), duration);
+    }
+
+    function updateShutterState() {
+      shutter.disabled = !(cameraReady && gpsReady);
+    }
+
+    function hasApiKey() {
+      return GOOGLE_API_KEY && GOOGLE_API_KEY !== 'PASTE_YOUR_KEY_HERE';
+    }
+
+    // ---- Camera ----
+    async function initCamera() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: { ideal: 'environment' },
+            width: { ideal: 1920 },
+            height: { ideal: 1080 }
+          },
+          audio: false
+        });
+        video.srcObject = stream;
+        await new Promise(r => video.onloadedmetadata = r);
+        cameraReady = true;
+        updateShutterState();
+      } catch (err) {
+        showStatus('Camera access denied. Please allow camera in settings.', 'error');
+      }
+    }
+
+    // ---- GPS ----
+    function initGPS() {
+      if (!navigator.geolocation) {
+        showStatus('GPS not supported on this device', 'error');
+        return;
+      }
+      navigator.geolocation.watchPosition(
+        handlePosition,
+        handleGPSError,
+        { enableHighAccuracy: true, maximumAge: 5000, timeout: 30000 }
+      );
+    }
+
+    function handleGPSError(err) {
+      if (!gpsReady) {
+        const msg = err.code === 1
+          ? 'Location permission denied. Please allow location in settings.'
+          : 'Unable to get location. Try going outdoors.';
+        showStatus(msg, 'error');
+      }
+    }
+
+    async function handlePosition(pos) {
+      const { latitude, longitude, accuracy } = pos.coords;
+      currentLocation = {
+        lat: latitude,
+        lon: longitude,
+        accuracy,
+        address: currentLocation?.address || null,
+        addressDetail: currentLocation?.addressDetail || null
+      };
+      gpsReady = true;
+      updateShutterState();
+
+      const dist = haversine(latitude, longitude, lastAddressFetch.lat, lastAddressFetch.lon);
+      const elapsed = Date.now() - lastAddressFetch.time;
+      if (dist > 50 || elapsed > 60000 || !currentLocation.address) {
+        fetchAddress(latitude, longitude);
+      }
+      preloadMap(latitude, longitude);
+      updateLivePreview();
+    }
+
+    function haversine(lat1, lon1, lat2, lon2) {
+      const R = 6371000;
+      const toRad = d => d * Math.PI / 180;
+      const dLat = toRad(lat2 - lat1);
+      const dLon = toRad(lon2 - lon1);
+      const a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon/2)**2;
+      return 2 * R * Math.asin(Math.sqrt(a));
+    }
+
+    // ---- Status pill (only for loading / error states) ----
+    function showStatus(text, kind) {
+      statusText.textContent = text;
+      statusEl.classList.toggle('error', kind === 'error');
+      statusEl.hidden = false;
+    }
+    function hideStatus() {
+      statusEl.hidden = true;
+    }
+
+    // ---- Live watermark preview ----
+    // This renders the same info that gets stamped on the photo,
+    // so the user sees a preview before tapping the shutter.
+    function updateLivePreview() {
+      if (!currentLocation) {
+        wmPreview.hidden = true;
+        return;
+      }
+
+      const title = buildPlaceTitle(currentLocation);
+      const address = currentLocation.address;
+
+      // Show preview only once we have at least the place name
+      if (!title && !address) {
+        wmPreview.hidden = true;
+        showStatus('Getting location…', 'loading');
+        return;
+      }
+
+      hideStatus();
+      wmPreview.hidden = false;
+
+      wmTitle.textContent = title || 'Current Location';
+      wmAddress.textContent = address || '';
+      wmMeta.textContent = `${currentLocation.lat.toFixed(5)}°, ${currentLocation.lon.toFixed(5)}° · ${formatTimeShort(new Date())}`;
+
+      // Map thumbnail
+      if (mapImage?.src) {
+        wmThumb.src = mapImage.src;
+        wmThumb.hidden = false;
+        thumbPlaceholder.style.display = 'none';
+      } else {
+        wmThumb.hidden = true;
+        thumbPlaceholder.style.display = 'flex';
+      }
+    }
+
+    function formatTimeShort(d) {
+      return d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
+    }
+
+    // ---- Google Geocoding ----
+    async function fetchAddress(lat, lon) {
+      if (!hasApiKey()) return;
+      try {
+        const url = `https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lon}&key=${GOOGLE_API_KEY}&language=en`;
+        const res = await fetch(url);
+        if (!res.ok) throw new Error('geocode http ' + res.status);
+        const data = await res.json();
+        if (data.status !== 'OK') {
+          console.warn('Geocoding status:', data.status, data.error_message || '');
+          return;
+        }
+        if (!data.results?.length) return;
+
+        const result = data.results[0];
+        const components = parseAddressComponents(result.address_components);
+
+        if (currentLocation) {
+          currentLocation.address = result.formatted_address;
+          currentLocation.addressDetail = components;
+          lastAddressFetch = { lat, lon, time: Date.now() };
+          updateLivePreview();
+        }
+      } catch (e) {
+        // silent fail
+      }
+    }
+
+    function parseAddressComponents(components) {
+      const out = {};
+      if (!components) return out;
+      for (const c of components) {
+        for (const type of c.types) {
+          if (!out[type]) out[type] = c.long_name;
+        }
+      }
+      return out;
+    }
+
+    function buildPlaceTitle(loc) {
+      const c = loc?.addressDetail;
+      if (!c) return null;
+      const place =
+        c.sublocality_level_3 || c.sublocality_level_2 || c.sublocality_level_1 ||
+        c.sublocality || c.neighborhood ||
+        c.locality ||
+        c.administrative_area_level_4 || c.administrative_area_level_3 ||
+        c.postal_town || c.administrative_area_level_2;
+      const state = c.administrative_area_level_1;
+      const country = c.country;
+      const parts = [];
+      if (place) parts.push(place);
+      if (state && state !== place) parts.push(state);
+      if (country) parts.push(country);
+      return parts.length ? parts.join(', ') : null;
+    }
+
+    // ---- Static Maps ----
+    async function preloadMap(lat, lon) {
+      if (mapImageLoc && mapImage) {
+        const d = haversine(lat, lon, mapImageLoc.lat, mapImageLoc.lon);
+        if (d < 200) return;
+      }
+      try {
+        // Revoke previous blob URL to free memory
+        if (mapImage?.src?.startsWith('blob:')) {
+          URL.revokeObjectURL(mapImage.src);
+        }
+        const img = await buildMapImage(lat, lon, 14, 360);
+        mapImage = img;
+        mapImageLoc = { lat, lon };
+        updateLivePreview();
+      } catch (e) {
+        console.warn('Map fetch failed:', e.message);
+      }
+    }
+
+    async function buildMapImage(lat, lon, zoom, sizePx) {
+      if (!hasApiKey()) throw new Error('No API key configured');
+
+      const params = new URLSearchParams({
+        center: `${lat},${lon}`,
+        zoom: String(zoom),
+        size: `${sizePx}x${sizePx}`,
+        scale: '2',
+        markers: `color:red|${lat},${lon}`,
+        key: GOOGLE_API_KEY
+      });
+      const url = `https://maps.googleapis.com/maps/api/staticmap?${params.toString()}`;
+
+      const res = await fetch(url);
+      if (!res.ok) throw new Error('static maps http ' + res.status);
+      const blob = await res.blob();
+      const objectUrl = URL.createObjectURL(blob);
+
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = () => { URL.revokeObjectURL(objectUrl); reject(new Error('decode failed')); };
+        img.src = objectUrl;
+      });
+    }
+
+    // ---- Capture ----
+    shutter.addEventListener('click', capturePhoto);
+
+    function capturePhoto() {
+      if (!video.videoWidth) return;
+
+      frozenFrame = document.createElement('canvas');
+      frozenFrame.width = video.videoWidth;
+      frozenFrame.height = video.videoHeight;
+      frozenFrame.getContext('2d').drawImage(video, 0, 0);
+
+      frozenLocation = currentLocation
+        ? { ...currentLocation, addressDetail: currentLocation.addressDetail ? { ...currentLocation.addressDetail } : null }
+        : null;
+      frozenMapImage = mapImage;
+      customTitle = null;
+
+      composeAndShowPreview();
+    }
+
+    function composeAndShowPreview() {
+      if (!frozenFrame || !frozenLocation) return;
+
+      const ctx = canvas.getContext('2d');
+      const photoW = frozenFrame.width;
+      const photoH = frozenFrame.height;
+      const panelH = computeOverlayHeight(photoW);
+
+      canvas.width = photoW;
+      canvas.height = photoH + panelH;
+
+      ctx.drawImage(frozenFrame, 0, 0);
+      drawInfoPanel(ctx, photoW, photoH, panelH);
+
+      canvas.toBlob((blob) => {
+        if (!blob) return;
+        lastBlob = blob;
+        if (previewImg.src) URL.revokeObjectURL(previewImg.src);
+        previewImg.src = URL.createObjectURL(blob);
+        preview.hidden = false;
+      }, 'image/jpeg', 0.92);
+    }
+
+    function getLayout(w) {
+      const pad = Math.max(w / 60, 16);
+      const fAddr = Math.max(w / 56, 20);
+      return {
+        pad, innerGap: pad * 0.9,
+        mapSize: Math.min(w * 0.28, 360),
+        fTitle: Math.max(w / 38, 30),
+        fAddr,
+        fMeta: Math.max(w / 62, 18),
+        lineGap: fAddr * 0.4
+      };
+    }
+
+    function computeOverlayHeight(w) {
+      const L = getLayout(w);
+      const textHeight =
+        L.fTitle + L.lineGap * 1.4 +
+        2 * (L.fAddr + L.lineGap) + L.lineGap * 0.4 +
+        L.fMeta + L.lineGap * 0.5 +
+        L.fMeta + L.lineGap * 0.5 +
+        L.fMeta;
+      return Math.max(L.mapSize + L.pad * 2, textHeight + L.pad * 2);
+    }
+
+    function drawInfoPanel(ctx, w, y0, panelH) {
+      const L = getLayout(w);
+      const title = customTitle || buildPlaceTitle(frozenLocation) || 'Current Location';
+      const fullAddr = frozenLocation?.address || '';
+      const coordLat = `Lat ${frozenLocation.lat.toFixed(6)}°`;
+      const coordLon = `Long ${frozenLocation.lon.toFixed(6)}°`;
+      const dt = formatDateTime(new Date());
+
+      const textX = L.pad + (frozenMapImage ? L.mapSize + L.innerGap : 0);
+      const textW = w - textX - L.pad;
+
+      ctx.font = `400 ${L.fAddr}px -apple-system, system-ui, sans-serif`;
+      const allAddrLines = wrapLine(ctx, fullAddr, textW);
+      const addrLines = allAddrLines.slice(0, 2);
+
+      ctx.fillStyle = '#0e0e10';
+      ctx.fillRect(0, y0, w, panelH);
+      ctx.fillStyle = 'rgba(255,255,255,0.1)';
+      ctx.fillRect(0, y0, w, 1);
+
+      if (frozenMapImage) {
+        const my = y0 + (panelH - L.mapSize) / 2;
+        const r = 8;
+        ctx.save();
+        roundRectPath(ctx, L.pad, my, L.mapSize, L.mapSize, r);
+        ctx.clip();
+        ctx.drawImage(frozenMapImage, L.pad, my, L.mapSize, L.mapSize);
+        ctx.restore();
+        ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+        ctx.lineWidth = 1.5;
+        roundRectPath(ctx, L.pad, my, L.mapSize, L.mapSize, r);
+        ctx.stroke();
+      }
+
+      let cy = y0 + L.pad;
+
+      ctx.fillStyle = '#fff';
+      ctx.font = `700 ${L.fTitle}px -apple-system, system-ui, sans-serif`;
+      ctx.textBaseline = 'top';
+      ctx.fillText(truncateToWidth(ctx, title, textW), textX, cy);
+      cy += L.fTitle + L.lineGap * 1.4;
+
+      ctx.font = `400 ${L.fAddr}px -apple-system, system-ui, sans-serif`;
+      ctx.fillStyle = 'rgba(255,255,255,0.92)';
+      addrLines.forEach((line, i) => {
+        let display = line;
+        if (i === addrLines.length - 1 && allAddrLines.length > addrLines.length) {
+          while (ctx.measureText(display + '…').width > textW && display.length) {
+            display = display.slice(0, -1);
+          }
+          display += '…';
+        }
+        ctx.fillText(display, textX, cy);
+        cy += L.fAddr + L.lineGap;
+      });
+      cy += L.lineGap * 0.4;
+
+      ctx.font = `500 ${L.fMeta}px -apple-system, system-ui, sans-serif`;
+      ctx.fillStyle = 'rgba(255,255,255,0.85)';
+      ctx.fillText(coordLat, textX, cy);
+      cy += L.fMeta + L.lineGap * 0.5;
+      ctx.fillText(coordLon, textX, cy);
+      cy += L.fMeta + L.lineGap * 0.5;
+      ctx.fillText(dt, textX, cy);
+    }
+
+    function roundRectPath(ctx, x, y, w, h, r) {
+      ctx.beginPath();
+      ctx.moveTo(x + r, y);
+      ctx.lineTo(x + w - r, y);
+      ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+      ctx.lineTo(x + w, y + h - r);
+      ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+      ctx.lineTo(x + r, y + h);
+      ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+      ctx.lineTo(x, y + r);
+      ctx.quadraticCurveTo(x, y, x + r, y);
+      ctx.closePath();
+    }
+
+    function wrapLine(ctx, text, maxWidth) {
+      if (!text) return [];
+      const words = text.split(' ');
+      const lines = [];
+      let current = '';
+      for (const word of words) {
+        const test = current ? current + ' ' + word : word;
+        if (ctx.measureText(test).width > maxWidth && current) {
+          lines.push(current);
+          current = word;
+        } else {
+          current = test;
+        }
+      }
+      if (current) lines.push(current);
+      return lines;
+    }
+
+    function truncateToWidth(ctx, text, maxWidth) {
+      if (ctx.measureText(text).width <= maxWidth) return text;
+      let t = text;
+      while (t.length && ctx.measureText(t + '…').width > maxWidth) t = t.slice(0, -1);
+      return t + '…';
+    }
+
+    function formatDateTime(d) {
+      const date = d.toLocaleDateString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric' });
+      const time = d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
+      const offset = -d.getTimezoneOffset();
+      const sign = offset >= 0 ? '+' : '-';
+      const abs = Math.abs(offset);
+      const tz = `GMT ${sign}${String(Math.floor(abs/60)).padStart(2,'0')}:${String(abs%60).padStart(2,'0')}`;
+      return `${date} ${time} ${tz}`;
+    }
+
+    // ---- Edit place name (in preview) ----
+    editTitleBtn.addEventListener('click', () => {
+      const current = customTitle || buildPlaceTitle(frozenLocation) || '';
+      const updated = window.prompt('Edit place name:', current);
+      if (updated !== null && updated.trim()) {
+        customTitle = updated.trim();
+        composeAndShowPreview();
+      }
+    });
+
+    // ---- Preview actions ----
+    function clearPreviewState() {
+      customTitle = null;
+      frozenFrame = null;
+      frozenLocation = null;
+      frozenMapImage = null;
+    }
+
+    function downloadBlob(blob, filename) {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+
+    document.getElementById('retake').addEventListener('click', () => {
+      preview.hidden = true;
+      clearPreviewState();
+    });
+
+    document.getElementById('save').addEventListener('click', () => {
+      if (!lastBlob) return;
+      downloadBlob(lastBlob, `geosnap-${Date.now()}.jpg`);
+      preview.hidden = true;
+      clearPreviewState();
+      showToast('Saved to device');
+    });
+
+    // ---- Share (WhatsApp, Gmail, anything) ----
+    document.getElementById('share').addEventListener('click', sharePhoto);
+
+    async function sharePhoto() {
+      if (!lastBlob) return;
+      const filename = `geosnap-${Date.now()}.jpg`;
+      const file = new File([lastBlob], filename, { type: 'image/jpeg', lastModified: Date.now() });
+
+      // Web Share API (Level 2 - with files) is the right way to share to WhatsApp
+      // The user picks WhatsApp from the system share sheet, photo gets sent.
+      if (navigator.share && navigator.canShare?.({ files: [file] })) {
+        try {
+          await navigator.share({
+            files: [file],
+            title: 'GeoSnap photo'
+          });
+          // Don't close preview on success - user might want to share again to another app
+        } catch (err) {
+          if (err.name !== 'AbortError') {
+            console.error('Share failed:', err);
+            // Fallback: download, instruct user
+            downloadBlob(lastBlob, filename);
+            showToast('Saved. Open WhatsApp and pick the photo from gallery.');
+          }
+        }
+      } else {
+        // No Web Share API support - save and instruct
+        downloadBlob(lastBlob, filename);
+        showToast('Saved. Open WhatsApp and pick the photo from gallery.');
+      }
+    }
+
+    // ---- PWA install prompt ----
+    window.addEventListener('beforeinstallprompt', (e) => {
+      e.preventDefault();
+      deferredInstallPrompt = e;
+      installBtn.hidden = false;
+    });
+
+    installBtn.addEventListener('click', async () => {
+      if (!deferredInstallPrompt) return;
+      try {
+        deferredInstallPrompt.prompt();
+        const { outcome } = await deferredInstallPrompt.userChoice;
+        if (outcome === 'accepted') {
+          installBtn.hidden = true;
+        }
+      } catch (e) {
+        console.error('Install failed:', e);
+      } finally {
+        deferredInstallPrompt = null;
+      }
+    });
+
+    window.addEventListener('appinstalled', () => {
+      installBtn.hidden = true;
+      deferredInstallPrompt = null;
+      showToast('Installed!');
+    });
+
+    // Hide install button if already installed (running in standalone mode)
+    if (window.matchMedia('(display-mode: standalone)').matches ||
+        window.navigator.standalone === true) {
+      installBtn.hidden = true;
+    }
+
+    // ---- Service worker ----
+    if ('serviceWorker' in navigator && location.protocol === 'https:') {
+      navigator.serviceWorker.register('service-worker.js').catch(() => {});
+    }
+
+    // ---- Boot ----
+    if (!hasApiKey()) {
+      console.warn('GeoSnap: GOOGLE_API_KEY is not set. Address lookup and map thumbnail will not work. Edit index.html to add your key.');
+    }
+    showStatus('Starting…', 'loading');
+    initCamera();
+    initGPS();
+  </script>
+</body>
+</html>
